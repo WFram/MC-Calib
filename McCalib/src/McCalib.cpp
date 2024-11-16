@@ -1505,10 +1505,13 @@ void Calibration::findPoseNoOverlapAllCamGroup() {
   no_overlap_camgroup_pair_pose_.clear();
 
   // Iterate through the camera groups
+  LOG_INFO << "Find overlap";
   for (const auto &it_groups_1 : cam_group_) {
     int group_idx1 = it_groups_1.first;
+    LOG_INFO << "group_idx1 " << group_idx1;
     for (const auto &it_groups_2 : cam_group_) {
       int group_idx2 = it_groups_2.first;
+      LOG_INFO << "group_idx2 " << group_idx2;
       if (group_idx1 != group_idx2) // if the two groups are different
       {
         initNonOverlapPair(group_idx1, group_idx2);
