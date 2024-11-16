@@ -1,6 +1,7 @@
 #include "opencv2/core/core.hpp"
 #include <iostream>
 #include <opencv2/aruco/charuco.hpp>
+#include <opencv2/imgproc/imgproc.hpp>
 #include <opencv2/opencv.hpp>
 #include <random>
 #include <stdio.h>
@@ -12,6 +13,195 @@
 #include <boost/asio/post.hpp>
 #include <boost/asio/thread_pool.hpp>
 #include <thread>
+
+namespace wfram {
+  int selectAndRefineChessboardCorners(cv::InputArray _allCorners, cv::InputArray _image,
+                                                      cv::OutputArray _selectedCorners,
+                                                      cv::OutputArray _selectedIds,
+                                                      const std::vector< cv::Size > &winSizes) {
+
+    const int minDistToBorder = 2; // minimum distance of the corner to the image border
+    // remaining corners, ids and window refinement sizes after removing corners outside the image
+    std::vector< cv::Point2f > filteredChessboardImgPoints;
+    std::vector< cv::Size > filteredWinSizes;
+    std::vector< int > filteredIds;
+
+    // filter corners outside the image
+    cv::Rect innerRect(minDistToBorder, minDistToBorder, _image.getMat().cols - 2 * minDistToBorder,
+                   _image.getMat().rows - 2 * minDistToBorder);
+    for(unsigned int i = 0; i < _allCorners.getMat().total(); i++) {
+        if(innerRect.contains(_allCorners.getMat().at< cv::Point2f >(i))) {
+            filteredChessboardImgPoints.push_back(_allCorners.getMat().at< cv::Point2f >(i));
+            filteredIds.push_back(i);
+            filteredWinSizes.push_back(winSizes[i]);
+        }
+    }
+
+    // if none valid, return 0
+    if(filteredChessboardImgPoints.size() == 0) return 0;
+
+    // corner refinement, first convert input image to grey
+    cv::Mat grey;
+    if(_image.type() == CV_8UC3)
+        cvtColor(_image, grey, cv::COLOR_BGR2GRAY);
+    else
+        _image.copyTo(grey);
+
+    const cv::Ptr<cv::aruco::DetectorParameters> params = cv::aruco::DetectorParameters::create(); // use default params for corner refinement
+
+    //// For each of the charuco corners, apply subpixel refinement using its correspondind winSize
+    // parallel_for_(cv::Range(0, (int)filteredChessboardImgPoints.size()), [&](const cv::Range& range) {
+    //     const int begin = range.start;
+    //     const int end = range.end;
+
+    //     for (int i = begin; i < end; i++) {
+    //         std::vector<cv::Point2f> in;
+    //         in.push_back(filteredChessboardImgPoints[i]);
+    //         cv::Size winSize = filteredWinSizes[i];
+    //         if (winSize.height == -1 || winSize.width == -1)
+    //             winSize = cv::Size(params->cornerRefinementWinSize, params->cornerRefinementWinSize);
+
+    //         cv::cornerSubPix(grey, in, winSize, cv::Size(),
+    //                      cv::TermCriteria(cv::TermCriteria::MAX_ITER | cv::TermCriteria::EPS,
+    //                                   params->cornerRefinementMaxIterations,
+    //                                   params->cornerRefinementMinAccuracy));
+
+    //         filteredChessboardImgPoints[i] = in[0];
+    //     }
+    // });
+
+    // parse output
+    cv::Mat(filteredChessboardImgPoints).copyTo(_selectedCorners);
+    cv::Mat(filteredIds).copyTo(_selectedIds);
+    return (int)filteredChessboardImgPoints.size();
+}
+
+  void getMaximumSubPixWindowSizes(cv::InputArrayOfArrays markerCorners, cv::InputArray markerIds,
+                                         cv::InputArray charucoCorners, const cv::Ptr<cv::aruco::CharucoBoard> &board,
+                                         std::vector< cv::Size > &sizes) {
+
+    unsigned int nCharucoCorners = (unsigned int)charucoCorners.getMat().total();
+    sizes.resize(nCharucoCorners, cv::Size(-1, -1));
+
+    for(unsigned int i = 0; i < nCharucoCorners; i++) {
+        if(charucoCorners.getMat().at< cv::Point2f >(i) == cv::Point2f(-1, -1)) continue;
+        if(board->nearestMarkerIdx[i].size() == 0) continue;
+
+        double minDist = -1;
+        int counter = 0;
+
+        // calculate the distance to each of the closest corner of each closest marker
+        for(unsigned int j = 0; j < board->nearestMarkerIdx[i].size(); j++) {
+            // find marker
+            int markerId = board->ids[board->nearestMarkerIdx[i][j]];
+            int markerIdx = -1;
+            for(unsigned int k = 0; k < markerIds.getMat().total(); k++) {
+                if(markerIds.getMat().at< int >(k) == markerId) {
+                    markerIdx = k;
+                    break;
+                }
+            }
+            if(markerIdx == -1) continue;
+            cv::Point2f markerCorner =
+                markerCorners.getMat(markerIdx).at< cv::Point2f >(board->nearestMarkerCorners[i][j]);
+            cv::Point2f charucoCorner = charucoCorners.getMat().at< cv::Point2f >(i);
+            double dist = norm(markerCorner - charucoCorner);
+            if(minDist == -1) minDist = dist; // if first distance, just assign it
+            minDist = cv::min(dist, minDist);
+            counter++;
+        }
+
+        // if this is the first closest marker, dont do anything
+        if(counter == 0)
+            continue;
+        else {
+            // else, calculate the maximum window size
+            int winSizeInt = int(minDist - 2); // remove 2 pixels for safety
+            if(winSizeInt < 1) winSizeInt = 1; // minimum size is 1
+            if(winSizeInt > 10) winSizeInt = 10; // maximum size is 10
+            sizes[i] = cv::Size(winSizeInt, winSizeInt);
+        }
+    }
+}
+
+  int interpolateCornersCharucoLocalHom(cv::InputArrayOfArrays _markerCorners,
+                                              cv::InputArray _markerIds, cv::InputArray _image,
+                                              const cv::Ptr<cv::aruco::CharucoBoard> &_board,
+                                              cv::OutputArray _charucoCorners,
+                                              cv::OutputArray _charucoIds) {
+
+    CV_Assert(_image.getMat().channels() == 1 || _image.getMat().channels() == 3);
+    CV_Assert(_markerCorners.total() == _markerIds.getMat().total() &&
+              _markerIds.getMat().total() > 0);
+
+    unsigned int nMarkers = (unsigned int)_markerIds.getMat().total();
+
+    // calculate local homographies for each marker
+    std::vector< cv::Mat > transformations;
+    transformations.resize(nMarkers);
+    for(unsigned int i = 0; i < nMarkers; i++) {
+        std::vector< cv::Point2f > markerObjPoints2D;
+        int markerId = _markerIds.getMat().at< int >(i);
+        std::vector< int >::const_iterator it = find(_board->ids.begin(), _board->ids.end(), markerId);
+        if(it == _board->ids.end()) continue;
+        int boardIdx = (int)std::distance<std::vector<int>::const_iterator>(_board->ids.begin(), it);
+        markerObjPoints2D.resize(4);
+        for(unsigned int j = 0; j < 4; j++)
+            markerObjPoints2D[j] =
+                cv::Point2f(_board->objPoints[boardIdx][j].x, _board->objPoints[boardIdx][j].y);
+
+        transformations[i] = getPerspectiveTransform(markerObjPoints2D, _markerCorners.getMat(i));
+    }
+
+    unsigned int nCharucoCorners = (unsigned int)_board->chessboardCorners.size();
+    std::vector< cv::Point2f > allChessboardImgPoints(nCharucoCorners, cv::Point2f(-1, -1));
+
+    // for each charuco corner, calculate its interpolation position based on the closest markers
+    // homographies
+    for(unsigned int i = 0; i < nCharucoCorners; i++) {
+        cv::Point2f objPoint2D = cv::Point2f(_board->chessboardCorners[i].x, _board->chessboardCorners[i].y);
+
+        std::vector< cv::Point2f > interpolatedPositions;
+        for(unsigned int j = 0; j < _board->nearestMarkerIdx[i].size(); j++) {
+            int markerId = _board->ids[_board->nearestMarkerIdx[i][j]];
+            int markerIdx = -1;
+            for(unsigned int k = 0; k < _markerIds.getMat().total(); k++) {
+                if(_markerIds.getMat().at< int >(k) == markerId) {
+                    markerIdx = k;
+                    break;
+                }
+            }
+            if(markerIdx != -1) {
+                std::vector< cv::Point2f > in, out;
+                in.push_back(objPoint2D);
+                perspectiveTransform(in, out, transformations[markerIdx]);
+                interpolatedPositions.push_back(out[0]);
+            }
+        }
+
+        // none of the closest markers detected
+        if(interpolatedPositions.size() == 0) continue;
+
+        // more than one closest marker detected, take middle point
+        if(interpolatedPositions.size() > 1) {
+            allChessboardImgPoints[i] = (interpolatedPositions[0] + interpolatedPositions[1]) / 2.;
+        }
+        // a single closest marker detected
+        else allChessboardImgPoints[i] = interpolatedPositions[0];
+    }
+
+    // calculate maximum window sizes for subpixel refinement. The size is limited by the distance
+    // to the closes marker corner to avoid erroneous displacements to marker corners
+    std::vector< cv::Size > subPixWinSizes;
+    getMaximumSubPixWindowSizes(_markerCorners, _markerIds, allChessboardImgPoints, _board,
+                                 subPixWinSizes);
+
+
+    // filter corners outside the image and subpixel-refine charuco corners
+    return selectAndRefineChessboardCorners(allChessboardImgPoints, _image, _charucoCorners,
+                                             _charucoIds, subPixWinSizes);
+}
+}
 
 namespace McCalib {
 
@@ -308,7 +498,11 @@ void Calibration::detectBoardsInImageWithCamera(const std::string frame_path,
                              marker_corners[i], marker_idx[i], charuco_params_);
 
     if (marker_corners[i].size() > 0) {
-      cv::aruco::interpolateCornersCharuco(marker_corners[i], marker_idx[i],
+      // initializeCalibrationAllCam();
+      // auto camera_matrix = cams_[i]->getCameraMat();
+      // auto distortion_vector = cams_[i]->getDistortionVectorVector();
+      // LOG_INFO << "Cam " << camera_matrix.at<double>(0, 0);
+      wfram::interpolateCornersCharucoLocalHom(marker_corners[i], marker_idx[i],
                                            image, boards_3d_[i]->charuco_board_,
                                            charuco_corners[i], charuco_idx[i]);
     }
