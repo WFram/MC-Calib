@@ -493,9 +493,66 @@ void Calibration::detectBoardsInImageWithCamera(const std::string frame_path,
 
   charuco_params_->adaptiveThreshConstant = 1;
 
-  for (std::size_t i = 0; i < nb_board_; i++) {
+  /* TODO https://github.com/opencv/opencv/issues/23152 */
+
+  // for (std::size_t i = 0; i < nb_board_; i++) {
+  int i = -1;
+  if (cam_idx == 0) i = 0;
+  if (cam_idx == 1) i = 1;
+  // LOG_INFO << "Id " << i << "\n";
+  LOG_INFO << "Current num boards " << boards_3d_.size() << " == " << nb_board_;
     cv::aruco::detectMarkers(image, boards_3d_[i]->charuco_board_->dictionary,
                              marker_corners[i], marker_idx[i], charuco_params_);
+    // LOG_INFO << "CHARUCO " << "\n";
+    // LOG_INFO << "Detected (before interp) " << marker_corners[i].size() << " corners for cam " << cam_idx;
+    // std::cout << "Char " << marker_corners[i].size() << "\n";
+
+    // std::cout << "Corners: ";
+    // for (size_t j = 0; j < marker_corners[i].size(); ++j) {
+    //   std::cout << marker_corners[i][j] << " ";
+    // } 
+    // std::cout << "\n";
+
+    // LOG_INFO << "Ids: ";
+    // for (size_t j = 0; j < marker_idx[i].size(); ++j) {
+    //   LOG_INFO << marker_idx[i][j] << " ";
+    // } 
+    // LOG_INFO << "\n";
+
+    // LOG_INFO << "Board ids: ";
+    // for (size_t j = 0; j < boards_3d_[i]->charuco_board_->ids.size(); ++j) {
+    //   LOG_INFO << boards_3d_[i]->charuco_board_->ids[j] << " ";
+    // } 
+    // LOG_INFO << "\n";
+
+    // std::cout << "Board obj pts: ";
+    // for (size_t j = 0; j < boards_3d_[i]->charuco_board_->objPoints.size(); ++j) {
+    //   std::cout << boards_3d_[i]->charuco_board_->objPoints[j] << " ";
+    // } 
+    // std::cout << "\n";
+
+    // std::cout << "Board corbers: ";
+    // for (size_t j = 0; j < boards_3d_[i]->charuco_board_->chessboardCorners.size(); ++j) {
+    //   std::cout << boards_3d_[i]->charuco_board_->chessboardCorners[j] << " ";
+    // } 
+    // std::cout << "\n";
+
+    // LOG_INFO << "marker_idx[i].size() " << marker_idx[i].size() << "\n";
+    for (auto& marker_id_item: marker_idx[i]) {
+      // LOG_INFO << "OLD: " << marker_id_item << "\n";
+      if (cam_idx == 0 && marker_id_item > 35) {
+        // LOG_INFO << "CHANGING MARKER ID\n";
+        marker_id_item -= 36;
+      }
+      if (cam_idx == 1 && marker_id_item > 35) {
+        // LOG_INFO << "CHANGING MARKER ID\n";
+        marker_id_item -= 18;
+      }
+    }
+
+    for (auto& marker_id_item: marker_idx[i]) {
+      LOG_INFO << "NEW: " << marker_id_item << "\n";
+    }
 
     if (marker_corners[i].size() > 0) {
       // initializeCalibrationAllCam();
