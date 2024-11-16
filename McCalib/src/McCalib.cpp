@@ -2111,7 +2111,7 @@ void Calibration::calibrateCameraGroup() {
   initCameraGroup();
   initAllCameraGroupObs();
   computeAllObjPoseInCameraGroup();
-  refineAllCameraGroupAndObjects();
+  // refineAllCameraGroupAndObjects();
 }
 
 /**
@@ -2132,7 +2132,7 @@ void Calibration::merge3DObjects() {
   estimatePoseAllObjects();
   computeAllObjPoseInCameraGroup();
   refineAllCameraGroupAndObjects();
-  this->reproErrorAllCamGroup();
+  // this->reproErrorAllCamGroup();
 }
 
 /**
