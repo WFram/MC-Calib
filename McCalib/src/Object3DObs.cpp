@@ -276,7 +276,7 @@ float Object3DObs::computeReprojectionError() const {
       // if (rep_err > 6.0)
       // LOG_WARNING << "LARGE REPROJECTION ERROR ::: " << rep_err  ;
     }
-    LOG_DEBUG << "Frame :: " << this->frame_id_
+    LOG_INFO << "Frame :: " << this->frame_id_
               << "  object :: " << this->object_3d_id_ << "  --- Mean Error ::"
               << sum_err_object / error_object_vec.size()
               << "  Nb pts :: " << error_object_vec.size();

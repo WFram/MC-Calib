@@ -72,6 +72,7 @@ Board::Board(const std::string config_path, const int board_idx) {
  */
 void Board::insertNewBoard(std::shared_ptr<BoardObs> new_board) {
   board_observations_[board_observations_.size()] = new_board;
+  LOG_INFO << "New board inserted. Now we have " << board_observations_.size() << " for board " << board_id_;
 }
 
 /**

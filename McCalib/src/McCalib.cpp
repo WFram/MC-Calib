@@ -351,13 +351,17 @@ void Calibration::detectBoardsInImageWithCamera(const std::string frame_path,
         int board_idx = i;
         {
           std::unique_lock<std::mutex> lock(insert_new_board_lock_);
+          LOG_INFO << "New board for camera " << cam_idx << " is added. Board " << board_idx;
           insertNewBoard(cam_idx, frame_idx, board_idx,
                          charuco_corners[board_idx], charuco_idx[board_idx],
                          frame_path);
         }
       }
+      else
+        LOG_INFO << "Camera " << cam_idx << " didn't pass collinearity check.\n\t Residual: "
+        << residual << "\n\t Threshold: " << boards_3d_[i]->square_size_ * 0.1 << "\n\tCharuco corners " << charuco_corners[i].size();
     }
-  }
+  // }
 }
 
 /**
@@ -735,6 +739,7 @@ void Calibration::computeBoardsPairPose() {
 
     if (BoardIdx.size() > 1) // if more than one board is visible
     {
+      LOG_INFO << "More than one board is visible";
       for (const auto &it1 : current_board->board_observations_) {
         auto board1_obs_ptr = it1.second.lock();
         if (board1_obs_ptr) {
@@ -777,6 +782,7 @@ void Calibration::initInterTransform(
     const std::map<std::pair<int, int>, std::vector<cv::Mat>> &pose_pairs,
     std::map<std::pair<int, int>, cv::Mat> &inter_transform) {
   inter_transform.clear();
+  LOG_INFO << "Num pose pairs to compute inter transform " << pose_pairs.size();
   for (const auto &it : pose_pairs) {
     const std::pair<int, int> &pair_idx = it.first;
     const std::vector<cv::Mat> &poses_temp = it.second;
@@ -825,12 +831,18 @@ void Calibration::initInterBoardsGraph() {
   covis_boards_graph_.clearGraph();
 
   // Each board is a vertex if it has been observed at least once
+  LOG_INFO << "Num boards " << boards_3d_.size();
   for (const auto &it : boards_3d_) {
     if (it.second->board_observations_.size() > 0) {
+      LOG_INFO << "Adding vertex " << it.second->board_id_ << " to the boards graph";
       covis_boards_graph_.addVertex(it.second->board_id_);
     }
+    else
+      LOG_INFO << "Board " << it.second->board_id_ << " doesn't contain observations";
   }
 
+  if (board_pose_pairs_.empty())
+    LOG_INFO << "Boards graph will not contain edges";
   for (const auto &it : board_pose_pairs_) {
     const std::pair<int, int> &board_pair_idx = it.first;
     const std::vector<cv::Mat> &board_poses_temp = it.second;
@@ -851,12 +863,12 @@ void Calibration::init3DObjects() {
   // new 3D object)
   std::vector<std::vector<int>> connect_comp =
       covis_boards_graph_.connectedComponents();
-  LOG_DEBUG << "Number of 3D objects detected :: " << connect_comp.size();
+  LOG_INFO << "Number of 3D objects detected :: " << connect_comp.size();
 
   // Declare a new 3D object for each connected component
   for (std::size_t i = 0; i < connect_comp.size(); i++) {
-    LOG_DEBUG << "Obj Id :: " << i;
-    LOG_DEBUG << "Number of boards in this object :: "
+    LOG_INFO << "Obj Id :: " << i;
+    LOG_INFO << "Number of boards in this object :: "
               << connect_comp[i].size();
 
     // Find the reference board in this object
@@ -1065,15 +1077,18 @@ void Calibration::computeCamerasPairPose() {
 void Calibration::initInterCamerasGraph() {
   covis_camera_graph_.clearGraph();
   // Each camera is a vertex if it has observed at least one object
+  LOG_INFO << "this->cams_ " << this->cams_.size();
   for (const auto &it : this->cams_) {
     if (it.second->board_observations_.size() > 0) {
       covis_camera_graph_.addVertex(it.second->cam_idx_);
     }
   }
   // Build the graph with cameras' pairs
+  LOG_INFO << "camera_pose_pairs_ " << camera_pose_pairs_.size();
   for (const auto &it : camera_pose_pairs_) {
     const std::pair<int, int> &camera_pair_idx = it.first;
     const std::vector<cv::Mat> &camera_poses_temp = it.second;
+    LOG_INFO << "Cams " << camera_pair_idx.first << " and " << camera_pair_idx.second << " have " << camera_poses_temp.size() << " poses";
     covis_camera_graph_.addEdge(camera_pair_idx.first, camera_pair_idx.second,
                                 ((double)1 / camera_poses_temp.size()));
   }
@@ -1088,12 +1103,12 @@ void Calibration::initCameraGroup() {
   // new camera group)
   std::vector<std::vector<int>> connect_comp =
       covis_camera_graph_.connectedComponents();
-  LOG_DEBUG << "Number of camera group detected :: " << connect_comp.size();
+  LOG_INFO << "Number of camera group detected :: " << connect_comp.size();
 
   // Declare a new camera group for each connected component
   for (std::size_t i = 0; i < connect_comp.size(); i++) {
-    LOG_DEBUG << "camera group id :: " << i;
-    LOG_DEBUG << "Number of cameras in the group :: " << connect_comp.size();
+    LOG_INFO << "camera group id :: " << i;
+    LOG_INFO << "Number of cameras in the group :: " << connect_comp.size();
 
     // Find the reference camera in this group
     int id_ref_cam =
@@ -1336,6 +1351,7 @@ void Calibration::findPairObjectForNonOverlap() {
 void Calibration::initNonOverlapPair(const int cam_group_id1,
                                      const int cam_group_id2) {
   // Prepare the group of interest
+  LOG_INFO << "INIT NON OVERLAP PAIR";
   std::shared_ptr<CameraGroup> cam_group1 = cam_group_[cam_group_id1];
   std::shared_ptr<CameraGroup> cam_group2 = cam_group_[cam_group_id2];
 
@@ -1447,6 +1463,9 @@ void Calibration::initNonOverlapPair(const int cam_group_id1,
   }
 
   // Check if enough common poses are available:
+  LOG_INFO << "CHECK POSES";
+  LOG_INFO << "pose_abs_1.size() " << pose_abs_1.size();
+  LOG_INFO << "pose_abs_2.size() " << pose_abs_2.size(); 
   if (pose_abs_1.size() <= 3 || pose_abs_2.size() <= 3) {
     return;
   }
@@ -1469,6 +1488,13 @@ void Calibration::initNonOverlapPair(const int cam_group_id1,
       pose_g1_g2;
   no_overlap__camgroup_pair_common_cnt_[std::make_pair(
       cam_group_id1, cam_group_id2)] = pose_abs_1.size();
+  
+  std::cout << "handeye\n";
+  for (int kkk = 0; kkk < 4; ++kkk) {
+    for (int kkkj = 0; kkkj < 4; ++kkkj)
+      std::cout << pose_g1_g2.at<double>(kkk, kkkj);
+    std::cout << "\n";
+  }
 }
 
 /**
